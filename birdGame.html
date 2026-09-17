@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Faz 1 — Kuş + Dünya + Uçuş</title>
+
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, sans-serif;
+    background: #111; color: #eee;
+    display: flex; height: 100vh; overflow: hidden;
+  }
+  #left {
+    position: relative; width: 38%; background: #000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #webcam, #overlay {
+    position: absolute; width: 100%; height: 100%;
+    object-fit: contain; transform: scaleX(-1);
+  }
+  #right { width: 62%; }
+  #renderCanvas { width: 100%; height: 100%; display: block; }
+  #status {
+    position: absolute; top: 10px; left: 10px;
+    background: rgba(0,0,0,0.6); padding: 8px 12px;
+    border-radius: 8px; font-size: 13px; z-index: 10; max-width: 34vw;
+  }
+  #hud {
+    position: absolute; bottom: 10px; left: 10px;
+    background: rgba(0,0,0,0.6); padding: 8px 12px;
+    border-radius: 8px; font-size: 13px; font-family: monospace; z-index: 10;
+  }
+</style>
+</head>
+
+<body>
+  <div id="left">
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div id="status">Yükleniyor…</div>
+    <div id="hud">roll: 0.00  pitch: 0.00</div>
+  </div>
+  <div id="right">
+    <canvas id="renderCanvas"></canvas>
+  </div>
+
+<script type="module">
+import {
+  PoseLandmarker, FilesetResolver, DrawingUtils
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const video   = document.getElementById("webcam");
+const overlay = document.getElementById("overlay");
+const octx    = overlay.getContext("2d");
+const statusEl = document.getElementById("status");
+const hud     = document.getElementById("hud");
+
+// =========================================================
+// 1) BABYLON — sahne, ışık, sis
+// =========================================================
+const canvas = document.getElementById("renderCanvas");
+const engine = new BABYLON.Engine(canvas, true);
+const scene  = new BABYLON.Scene(engine);
+
+scene.clearColor = new BABYLON.Color4(0.45, 0.62, 0.42, 1); // yeşilimsi ufuk
+// Sis: uzağı silikleştirip derinlik hissi verir (skypeck estetiği)
+scene.fogMode    = BABYLON.Scene.FOGMODE_EXP2;
+scene.fogColor   = new BABYLON.Color3(0.45, 0.62, 0.42);
+scene.fogDensity = 0.006;
+
+const sun = new BABYLON.HemisphericLight("sun", new BABYLON.Vector3(0.3, 1, 0.2), scene);
+sun.intensity = 1.0;
+
+// --- Zemin ---
+const ground = BABYLON.MeshBuilder.CreateGround("ground", { width: 600, height: 600 }, scene);
+const gmat = new BABYLON.StandardMaterial("gmat", scene);
+gmat.diffuseColor  = new BABYLON.Color3(0.30, 0.55, 0.28);
+gmat.specularColor = new BABYLON.Color3(0, 0, 0);
+ground.material = gmat;
+
+// --- Ağaçlar (basit: gövde + tepe) ---
+const trunkMat = new BABYLON.StandardMaterial("trunkMat", scene);
+trunkMat.diffuseColor = new BABYLON.Color3(0.25, 0.16, 0.10);
+const leafMat = new BABYLON.StandardMaterial("leafMat", scene);
+leafMat.diffuseColor  = new BABYLON.Color3(0.10, 0.22, 0.30); // koyu mavi-yeşil
+leafMat.specularColor = new BABYLON.Color3(0, 0, 0);
+
+function makeTree(x, z) {
+  const trunk = BABYLON.MeshBuilder.CreateCylinder("t", { height: 3, diameter: 0.5 }, scene);
+  trunk.material = trunkMat;
+  trunk.position.set(x, 1.5, z);
+  const leaves = BABYLON.MeshBuilder.CreateSphere("l", { diameter: 3.5, segments: 6 }, scene);
+  leaves.material = leafMat;
+  leaves.position.set(x, 3.8, z);
+}
+for (let i = 0; i < 120; i++) {
+  makeTree((Math.random() - 0.5) * 500, (Math.random() - 0.5) * 500);
+}
+
+// =========================================================
+// 2) KUŞ — Babylon parçalarından (dış model yok)
+// =========================================================
+const bird = new BABYLON.TransformNode("bird", scene); // kuşun kökü
+
+const bodyMat = new BABYLON.StandardMaterial("bodyMat", scene);
+bodyMat.diffuseColor = new BABYLON.Color3(0.75, 0.25, 0.65); // mor gövde
+const wingMat = new BABYLON.StandardMaterial("wingMat", scene);
+wingMat.diffuseColor = new BABYLON.Color3(0.55, 0.85, 0.45); // açık yeşil kanat
+
+// Gövde (öne uzatılmış küre) — +Z ileri yönü
+const body = BABYLON.MeshBuilder.CreateSphere("body", { diameterX: 0.8, diameterY: 0.5, diameterZ: 1.8 }, scene);
+body.material = bodyMat;
+body.parent = bird;
+
+// Baş
+const head = BABYLON.MeshBuilder.CreateSphere("head", { diameter: 0.5 }, scene);
+head.material = bodyMat;
+head.position.set(0, 0.15, 1.0);
+head.parent = bird;
+
+// Kanatlar — pivot iç kenarda olsun ki çırparken omuzdan dönsün
+const leftWing = BABYLON.MeshBuilder.CreateBox("lw", { width: 1.6, height: 0.06, depth: 0.9 }, scene);
+leftWing.material = wingMat;
+leftWing.parent = bird;
+leftWing.position.x = -0.9;
+leftWing.setPivotPoint(new BABYLON.Vector3(0.8, 0, 0));
+
+const rightWing = BABYLON.MeshBuilder.CreateBox("rw", { width: 1.6, height: 0.06, depth: 0.9 }, scene);
+rightWing.material = wingMat;
+rightWing.parent = bird;
+rightWing.position.x = 0.9;
+rightWing.setPivotPoint(new BABYLON.Vector3(-0.8, 0, 0));
+
+// Başlangıç konumu
+bird.position.set(0, 25, 0);
+
+// =========================================================
+// 3) TAKİP KAMERASI (kuşun arkasına, elle konumlandırıyoruz)
+// =========================================================
+const camera = new BABYLON.UniversalCamera("cam", new BABYLON.Vector3(0, 30, -12), scene);
+// attachControl YOK — fareyle oynatılmasın, hep kuşu takip etsin
+const CAM_DIST = 12, CAM_HEIGHT = 4;
+
+// =========================================================
+// 4) UÇUŞ DURUMU
+// =========================================================
+let heading = 0;        // uçuş yönü (yaw, radyan)
+let smoothRoll  = 0;    // görsel + dönüş için yumuşatılmış roll
+let smoothPitch = 0;
+let targetRoll  = 0;    // poz'dan gelen ham hedef (deadzone + clamp'li)
+let targetPitch = 0;
+let flapT = 0;
+
+// ---- Uçuş ayarları (istediğin gibi oyna) ----
+const SPEED      = 14;    // sürekli ileri hız
+const TURN_RATE  = 1.4;   // roll -> ne kadar hızlı döner (banking-to-turn)
+const CLIMB_RATE = 10;    // pitch -> ne kadar hızlı yükselir/alçalır
+const MAX_ROLL   = 0.55;  // maksimum yatma (takla imkânsız)
+const MAX_PITCH  = 0.5;
+const ROLL_GAIN  = 2.8;
+const PITCH_GAIN = 2.8;
+const DEADZONE   = 0.04;  // bu eşiğin altındaki minik hareketi yok say (titreme önler)
+
+function lerp(a, b, t)  { return a + (b - a) * t; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function deadzone(v, d) { return Math.abs(v) < d ? 0 : v; }
+
+// =========================================================
+// 5) MEDIAPIPE + WEBCAM
+// =========================================================
+let poseLandmarker, drawingUtils, lastVideoTime = -1;
+
+async function initPose() {
+  statusEl.textContent = "MediaPipe modeli indiriliyor…";
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numPoses: 1
+  });
+  drawingUtils = new DrawingUtils(octx);
+  statusEl.textContent = "Kamera açılıyor…";
+  startWebcam();
+}
+
+async function startWebcam() {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+  video.srcObject = stream;
+  video.addEventListener("loadeddata", () => {
+    overlay.width  = video.videoWidth;
+    overlay.height = video.videoHeight;
+    statusEl.textContent = "Uçuyorsun! Kollarını eğ → o yöne dön. Kaldır/indir → yüksel/alçal.";
+    detectLoop();
+  });
+}
+
+// Poz döngüsü: sadece HEDEF açıları günceller (fizik render'da işlenir)
+function detectLoop() {
+  if (video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    poseLandmarker.detectForVideo(video, performance.now(), (result) => {
+      octx.save();
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+      if (result.landmarks && result.landmarks.length > 0) {
+        const lm = result.landmarks[0];
+        drawingUtils.drawConnectors(lm, PoseLandmarker.POSE_CONNECTIONS, { color: "#38bdf8", lineWidth: 3 });
+        drawingUtils.drawLandmarks(lm, { color: "#fbbf24", radius: 4 });
+        readPose(lm);
+      } else {
+        // Poz kaybolursa kuş kendini düzeltsin
+        targetRoll = 0; targetPitch = 0;
+      }
+      octx.restore();
+    });
+  }
+  requestAnimationFrame(detectLoop);
+}
+
+function readPose(lm) {
+  const ls = lm[11], rs = lm[12]; // omuzlar
+  const lw = lm[15], rw = lm[16]; // bilekler
+
+  // ROLL: iki bileğin yükseklik farkı (fark + clamp = takla yok)
+  let roll = (rw.y - lw.y) * ROLL_GAIN;
+  roll = deadzone(roll, DEADZONE);
+  targetRoll = clamp(roll, -MAX_ROLL, MAX_ROLL);
+  // Yön ters gelirse: (rw.y - lw.y) -> (lw.y - rw.y)
+
+  // PITCH: bilekler omuzlara göre yukarıda mı?
+  const shoulderY = (ls.y + rs.y) / 2;
+  const wristY    = (lw.y + rw.y) / 2;
+  let pitch = (shoulderY - wristY) * PITCH_GAIN;
+  pitch = deadzone(pitch, DEADZONE);
+  targetPitch = clamp(pitch, -MAX_PITCH, MAX_PITCH);
+}
+
+// =========================================================
+// 6) RENDER DÖNGÜSÜ — fizik + görsel + kamera (60fps)
+// =========================================================
+scene.onBeforeRenderObservable.add(() => {
+  const dt = engine.getDeltaTime() / 1000; // saniye
+
+  // Hedefe doğru yumuşat
+  smoothRoll  = lerp(smoothRoll,  targetRoll,  0.12);
+  smoothPitch = lerp(smoothPitch, targetPitch, 0.12);
+
+  // Banking-to-turn: yatınca uçuş yönü döner
+  heading += smoothRoll * TURN_RATE * dt;
+
+  // İleri hareket (heading yönünde) + yükseliş
+  const fwd = new BABYLON.Vector3(Math.sin(heading), 0, Math.cos(heading));
+  bird.position.addInPlace(fwd.scale(SPEED * dt));
+  bird.position.y += smoothPitch * CLIMB_RATE * dt;
+  bird.position.y = Math.max(3, bird.position.y); // zemine girme
+
+  // Kuşun duruşu
+  bird.rotation.y = heading;         // burnu gittiği yöne baksın
+  bird.rotation.x = -smoothPitch;    // ters gelirse: +smoothPitch
+  bird.rotation.z = -smoothRoll;     // dönüşe yatsın; ters gelirse: +smoothRoll
+
+  // Kanat çırpma
+  flapT += dt * 10;
+  const flap = Math.sin(flapT) * 0.6;
+  leftWing.rotation.z  =  flap;
+  rightWing.rotation.z = -flap;
+
+  // Kamerayı kuşun arkasına yerleştir
+  const camPos = bird.position.subtract(fwd.scale(CAM_DIST));
+  camPos.y += CAM_HEIGHT;
+  camera.position = BABYLON.Vector3.Lerp(camera.position, camPos, 0.1);
+  camera.setTarget(bird.position.add(new BABYLON.Vector3(0, 1, 0)));
+
+  hud.textContent = `roll: ${smoothRoll.toFixed(2)}  pitch: ${smoothPitch.toFixed(2)}`;
+});
+
+engine.runRenderLoop(() => scene.render());
+window.addEventListener("resize", () => engine.resize());
+
+initPose().catch((e) => { statusEl.textContent = "Hata: " + e.message; console.error(e); });
+</script>
+</body>
+</html>
