@@ -3,39 +3,43 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Faz 1 — Gerçekçi Kuş Modeli</title>
+<title>Faz 2 — Hedef Toplama</title>
 
 <script src="https://cdn.babylonjs.com/babylon.js"></script>
-<!-- glTF/GLB yükleyici — .glb modelleri bunsuz yüklenmez -->
 <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
 
 <style>
   * { box-sizing: border-box; }
-  body {
-    margin: 0; font-family: system-ui, sans-serif;
-    background: #111; color: #eee;
-    display: flex; height: 100vh; overflow: hidden;
-  }
-  #left {
-    position: relative; width: 38%; background: #000;
-    display: flex; align-items: center; justify-content: center;
-  }
-  #webcam, #overlay {
-    position: absolute; width: 100%; height: 100%;
-    object-fit: contain; transform: scaleX(-1);
-  }
-  #right { width: 62%; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee;
+    display: flex; height: 100vh; overflow: hidden; }
+  #left { position: relative; width: 38%; background: #000;
+    display: flex; align-items: center; justify-content: center; }
+  #webcam, #overlay { position: absolute; width: 100%; height: 100%;
+    object-fit: contain; transform: scaleX(-1); }
+  #right { position: relative; width: 62%; }
   #renderCanvas { width: 100%; height: 100%; display: block; }
-  #status {
-    position: absolute; top: 10px; left: 10px;
-    background: rgba(0,0,0,0.6); padding: 8px 12px;
-    border-radius: 8px; font-size: 13px; z-index: 10; max-width: 34vw;
-  }
-  #hud {
-    position: absolute; bottom: 10px; left: 10px;
-    background: rgba(0,0,0,0.6); padding: 8px 12px;
-    border-radius: 8px; font-size: 13px; font-family: monospace; z-index: 10;
-  }
+  #status { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6);
+    padding: 8px 12px; border-radius: 8px; font-size: 13px; z-index: 10; max-width: 34vw; }
+  #hud { position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.6);
+    padding: 8px 12px; border-radius: 8px; font-size: 13px; font-family: monospace; z-index: 10; }
+
+  /* --- OYUN ARAYÜZÜ (sağ panel üstünde) --- */
+  #gameHud { position: absolute; top: 12px; left: 0; right: 0; z-index: 10;
+    display: flex; justify-content: center; gap: 14px; pointer-events: none; }
+  #score, #timer { background: rgba(0,0,0,0.55); padding: 6px 16px; border-radius: 20px;
+    font-size: 18px; font-weight: 600; }
+  #score { color: #ffd54a; }
+  #compass { position: absolute; top: 66px; left: 50%; transform: translateX(-50%);
+    z-index: 10; text-align: center; pointer-events: none; }
+  #arrow { font-size: 42px; color: #ffd54a; line-height: 1;
+    text-shadow: 0 0 8px rgba(0,0,0,0.7); transition: transform 0.08s linear; }
+  #dist { display: inline-block; margin-top: 2px; font-size: 15px;
+    background: rgba(0,0,0,0.5); padding: 2px 10px; border-radius: 10px; }
+  #win { position: absolute; inset: 0; z-index: 20; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.55); text-align: center; }
+  #win h1 { font-size: 40px; margin: 0 0 8px; color: #ffd54a; }
+  #win p { font-size: 22px; margin: 0; }
 </style>
 </head>
 
@@ -48,6 +52,15 @@
   </div>
   <div id="right">
     <canvas id="renderCanvas"></canvas>
+    <div id="gameHud">
+      <div id="score">0 / 15</div>
+      <div id="timer">00:00</div>
+    </div>
+    <div id="compass">
+      <div id="arrow">▲</div>
+      <div id="dist">--</div>
+    </div>
+    <div id="win"><h1>Tebrikler!</h1><p id="winText"></p></div>
   </div>
 
 <script type="module">
@@ -60,6 +73,14 @@ const overlay = document.getElementById("overlay");
 const octx    = overlay.getContext("2d");
 const statusEl = document.getElementById("status");
 const hud     = document.getElementById("hud");
+const scoreEl = document.getElementById("score");
+const timerEl = document.getElementById("timer");
+const arrowEl = document.getElementById("arrow");
+const distEl  = document.getElementById("dist");
+const winEl   = document.getElementById("win");
+const winText = document.getElementById("winText");
+
+const WORLD_LIMIT = 280;
 
 // =========================================================
 // 1) BABYLON — sahne, ışık, sis
@@ -68,45 +89,133 @@ const canvas = document.getElementById("renderCanvas");
 const engine = new BABYLON.Engine(canvas, true);
 const scene  = new BABYLON.Scene(engine);
 
-scene.clearColor = new BABYLON.Color4(0.45, 0.62, 0.42, 1);
+scene.clearColor = new BABYLON.Color4(0.55, 0.72, 0.55, 1);
 scene.fogMode    = BABYLON.Scene.FOGMODE_EXP2;
-scene.fogColor   = new BABYLON.Color3(0.45, 0.62, 0.42);
-scene.fogDensity = 0.006;
+scene.fogColor   = new BABYLON.Color3(0.55, 0.72, 0.55);
+scene.fogDensity = 0.005;
 
 const sun = new BABYLON.HemisphericLight("sun", new BABYLON.Vector3(0.3, 1, 0.2), scene);
-sun.intensity = 1.0;
+sun.intensity = 1.05;
 
+// Parlama efekti (küreler ışıldasın)
+const glow = new BABYLON.GlowLayer("glow", scene);
+glow.intensity = 0.9;
+
+// --- ÇİM DOKUSU ---
+function makeGrassTexture() {
+  const size = 256;
+  const tex = new BABYLON.DynamicTexture("grass", size, scene, false);
+  const c = tex.getContext();
+  c.fillStyle = "#3f7a37"; c.fillRect(0, 0, size, size);
+  const greens = ["#356b2e", "#478a3b", "#2f5f28", "#54984a", "#3c7534"];
+  for (let i = 0; i < 3500; i++) {
+    c.strokeStyle = greens[(Math.random() * greens.length) | 0];
+    c.lineWidth = 1 + Math.random() * 1.5;
+    const x = Math.random() * size, y = Math.random() * size;
+    const len = 2 + Math.random() * 4;
+    c.beginPath(); c.moveTo(x, y);
+    c.lineTo(x + (Math.random() - 0.5) * 2, y - len); c.stroke();
+  }
+  tex.update();
+  tex.wrapU = tex.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+  tex.uScale = tex.vScale = 80;
+  return tex;
+}
 const ground = BABYLON.MeshBuilder.CreateGround("ground", { width: 600, height: 600 }, scene);
 const gmat = new BABYLON.StandardMaterial("gmat", scene);
-gmat.diffuseColor  = new BABYLON.Color3(0.30, 0.55, 0.28);
-gmat.specularColor = new BABYLON.Color3(0, 0, 0);
+gmat.diffuseTexture = makeGrassTexture();
+gmat.specularColor  = new BABYLON.Color3(0, 0, 0);
 ground.material = gmat;
 
+// --- DOĞAL AĞAÇLAR (jitter'lı ızgara) ---
+const treePositions = [];
+const CELL = 42, JITTER = 0.85, SKIP = 0.18;
+for (let gx = -WORLD_LIMIT; gx < WORLD_LIMIT; gx += CELL) {
+  for (let gz = -WORLD_LIMIT; gz < WORLD_LIMIT; gz += CELL) {
+    if (Math.random() < SKIP) continue;
+    const x = gx + CELL / 2 + (Math.random() - 0.5) * CELL * JITTER;
+    const z = gz + CELL / 2 + (Math.random() - 0.5) * CELL * JITTER;
+    if (Math.abs(x) > WORLD_LIMIT || Math.abs(z) > WORLD_LIMIT) continue;
+    treePositions.push({ x, z });
+  }
+}
 const trunkMat = new BABYLON.StandardMaterial("trunkMat", scene);
 trunkMat.diffuseColor = new BABYLON.Color3(0.25, 0.16, 0.10);
 const leafMat = new BABYLON.StandardMaterial("leafMat", scene);
-leafMat.diffuseColor  = new BABYLON.Color3(0.10, 0.22, 0.30);
+leafMat.diffuseColor  = new BABYLON.Color3(0.12, 0.30, 0.16);
 leafMat.specularColor = new BABYLON.Color3(0, 0, 0);
-function makeTree(x, z) {
+let proceduralTrees = [];
+treePositions.forEach(p => {
   const trunk = BABYLON.MeshBuilder.CreateCylinder("t", { height: 3, diameter: 0.5 }, scene);
-  trunk.material = trunkMat; trunk.position.set(x, 1.5, z);
+  trunk.material = trunkMat; trunk.position.set(p.x, 1.5, p.z);
   const leaves = BABYLON.MeshBuilder.CreateSphere("l", { diameter: 3.5, segments: 6 }, scene);
-  leaves.material = leafMat; leaves.position.set(x, 3.8, z);
+  leaves.material = leafMat; leaves.position.set(p.x, 3.8, p.z);
+  proceduralTrees.push(trunk, leaves);
+});
+const TREE_SCALE = 3, TREE_ROT_X = 0;
+BABYLON.SceneLoader.ImportMeshAsync(null, "./", "tree.glb", scene).then((res) => {
+  proceduralTrees.forEach(m => m.dispose());
+  const root = res.meshes[0]; root.setEnabled(false);
+  treePositions.forEach((p, i) => {
+    const holder = new BABYLON.TransformNode("th" + i, scene);
+    holder.position.set(p.x, 0, p.z);
+    holder.scaling.setAll(TREE_SCALE * (0.7 + Math.random() * 0.6));
+    holder.rotation = new BABYLON.Vector3(TREE_ROT_X, Math.random() * Math.PI * 2, 0);
+    const t = root.clone("tree" + i);
+    t.setEnabled(true); t.parent = holder; t.position.set(0, 0, 0);
+  });
+}).catch(() => {});
+
+// =========================================================
+// 1.5) HEDEFLER — parlayan küreler
+// =========================================================
+const TOTAL_TARGETS  = 15;
+const COLLECT_RADIUS = 6;
+const orbs = [];
+
+const orbMat = new BABYLON.StandardMaterial("orbMat", scene);
+orbMat.emissiveColor = new BABYLON.Color3(1.0, 0.82, 0.15); // altın sarısı ışıma
+orbMat.diffuseColor  = new BABYLON.Color3(1.0, 0.82, 0.15);
+orbMat.specularColor = new BABYLON.Color3(0.3, 0.3, 0.3);
+
+for (let i = 0; i < TOTAL_TARGETS; i++) {
+  const m = BABYLON.MeshBuilder.CreateSphere("orb" + i, { diameter: 3, segments: 12 }, scene);
+  m.material = orbMat;
+  const x = (Math.random() - 0.5) * 2 * (WORLD_LIMIT - 25);
+  const z = (Math.random() - 0.5) * 2 * (WORLD_LIMIT - 25);
+  const y = 8 + Math.random() * 24;
+  m.position.set(x, y, z);
+  orbs.push({ mesh: m, baseY: y, phase: Math.random() * Math.PI * 2,
+              collected: false, collecting: false, collectT: 0 });
 }
-for (let i = 0; i < 120; i++) makeTree((Math.random() - 0.5) * 500, (Math.random() - 0.5) * 500);
+
+let collectedCount = 0;
+
+// Toplama sesi (kod içinde, dosya yok)
+let audioCtx = null;
+function blip() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = "sine"; o.frequency.setValueAtTime(660, audioCtx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(1320, audioCtx.currentTime + 0.12);
+    g.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.18);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.18);
+  } catch (e) {}
+}
+document.addEventListener("click", () => { if (audioCtx && audioCtx.state === "suspended") audioCtx.resume(); });
 
 // =========================================================
-// 2) KUŞ — önce basit kuşu kur, GLB gelirse üstüne geç
+// 2) KUŞ
 // =========================================================
-const bird = new BABYLON.TransformNode("bird", scene); // flight bunu hareket ettirir
+const bird = new BABYLON.TransformNode("bird", scene);
 bird.position.set(0, 25, 0);
-
-// GLB modelini içine koyacağımız ara düğüm (ölçek/yön ayarı burada)
 const modelHolder = new BABYLON.TransformNode("modelHolder", scene);
 modelHolder.parent = bird;
 
-// applyFlap: çırpma gücünü kuşun kanadına uygular.
-// Başta basit-kuş sürümü; GLB yüklenirse animasyon sürümüyle değişir.
 let applyFlap = () => {};
 let proceduralParts = null;
 
@@ -115,69 +224,47 @@ function buildProceduralBird() {
   bodyMat.diffuseColor = new BABYLON.Color3(0.75, 0.25, 0.65);
   const wingMat = new BABYLON.StandardMaterial("wingMat", scene);
   wingMat.diffuseColor = new BABYLON.Color3(0.55, 0.85, 0.45);
-
   const body = BABYLON.MeshBuilder.CreateSphere("body", { diameterX: 0.8, diameterY: 0.5, diameterZ: 1.8 }, scene);
   body.material = bodyMat; body.parent = modelHolder;
   const head = BABYLON.MeshBuilder.CreateSphere("head", { diameter: 0.5 }, scene);
   head.material = bodyMat; head.position.set(0, 0.15, 1.0); head.parent = modelHolder;
-
   const lw = BABYLON.MeshBuilder.CreateBox("lw", { width: 1.6, height: 0.06, depth: 0.9 }, scene);
   lw.material = wingMat; lw.parent = modelHolder; lw.position.x = -0.9;
   lw.setPivotPoint(new BABYLON.Vector3(0.8, 0, 0));
   const rw = BABYLON.MeshBuilder.CreateBox("rw", { width: 1.6, height: 0.06, depth: 0.9 }, scene);
   rw.material = wingMat; rw.parent = modelHolder; rw.position.x = 0.9;
   rw.setPivotPoint(new BABYLON.Vector3(-0.8, 0, 0));
-
-  const meshes = [body, head, lw, rw];
-  proceduralParts = { meshes, lw, rw };
-
-  // Çırpma sadece flapPower > 0 iken: genlik güce bağlı, güç 0 -> kanat düz
+  proceduralParts = { meshes: [body, head, lw, rw] };
   let t = 0;
   applyFlap = (flapPower, dt) => {
-    t += dt * 12;
-    const amp = flapPower * 0.8;
-    const a = Math.sin(t) * amp;
-    lw.rotation.z =  a;
-    rw.rotation.z = -a;
+    t += dt * 12; const a = Math.sin(t) * flapPower * 0.8;
+    lw.rotation.z = a; rw.rotation.z = -a;
   };
 }
-buildProceduralBird(); // her zaman bir kuş olsun (yapıştır-çalış)
+buildProceduralBird();
 
-// --- GLB yüklemeyi dene: yanına bird.glb koyduysan gerçekçi modele geçer ---
-const MODEL_SCALE = 0.02;   // model çok büyük/küçükse ayarla (ör. 0.05 veya 10)
-const MODEL_ROT_Y = 0;    // burnu yanlış yöne bakıyorsa: Math.PI (180°) dene
-const FLAP_ANIM_SPEED = 3; // çırpınca gömülü animasyon ne hızda oynar
+const MODEL_SCALE = 0.02;   // sende çalışan ölçek
+const MODEL_ROT_Y = 0;      // <-- flamingonun DÜZ baktığı değerini buraya yaz
+const FLAP_ANIM_SPEED = 3;
 
 BABYLON.SceneLoader.ImportMeshAsync(null, "./", "bird.glb", scene).then((res) => {
-  // Basit kuşu kaldır
   if (proceduralParts) proceduralParts.meshes.forEach(m => m.dispose());
-
   const root = res.meshes[0];
   root.parent = modelHolder;
   modelHolder.scaling.setAll(MODEL_SCALE);
   modelHolder.rotation.y = MODEL_ROT_Y;
-  
-
-  // Gömülü kanat animasyonunu bul (isimde fly/flap/wing geçen; yoksa ilki)
   const groups = res.animationGroups || [];
   let flapGroup = groups.find(g => /fly|flap|wing/i.test(g.name)) || groups[0];
-
   if (flapGroup) {
-    flapGroup.start(true);          // döngüde başlat
-    flapGroup.speedRatio = 0;       // ama dururken çırpmasın
-    applyFlap = (flapPower) => {
-      // çırpma gücü -> animasyon hızı. Güç 0 -> animasyon donar (süzülme).
-      flapGroup.speedRatio = flapPower * FLAP_ANIM_SPEED;
-    };
-    statusEl.textContent = "Gerçekçi model yüklendi! Kollarını çırp → kuş çırpar.";
+    flapGroup.start(true); flapGroup.speedRatio = 0;
+    applyFlap = (flapPower) => { flapGroup.speedRatio = flapPower * FLAP_ANIM_SPEED; };
+    statusEl.textContent = "Küreleri topla! Kollarını çırp → hızlan.";
   } else {
-    // Model var ama animasyonu yok: en azından görünsün
     applyFlap = () => {};
     statusEl.textContent = "Model yüklendi (animasyonsuz).";
   }
 }).catch(() => {
-  // bird.glb yok/bozuk -> basit kuşla devam (sorun değil)
-  statusEl.textContent = "Uçuyorsun! (bird.glb eklersen gerçekçi kuşa geçer)";
+  statusEl.textContent = "Küreleri topla! (bird.glb eklersen gerçekçi kuşa geçer)";
 });
 
 // =========================================================
@@ -192,27 +279,30 @@ const CAM_DIST = 12, CAM_HEIGHT = 4;
 let heading = 0;
 let smoothRoll = 0, smoothPitch = 0;
 let targetRoll = 0, targetPitch = 0;
-
 let prevWristY = null, lastPoseTime = performance.now();
 let flapRaw = 0, flapPower = 0;
 
-const SPEED      = 14;
-const TURN_RATE  = 1.4;
-const CLIMB_RATE = 10;
-const MAX_ROLL   = 0.55;
-const MAX_PITCH  = 0.5;
-const ROLL_GAIN  = 2.8;
-const PITCH_GAIN = 2.8;
-const DEADZONE   = 0.04;
+const SPEED = 14, TURN_RATE = 1.4, CLIMB_RATE = 10;
+const MAX_ROLL = 0.55, MAX_PITCH = 0.5;
+const ROLL_GAIN = 2.8, PITCH_GAIN = 2.8, DEADZONE = 0.04;
+const FLAP_SENS = 0.5, FLAP_THRUST = 12, FLAP_LIFT = 6;
+const SOFT_EDGE = 210, EDGE_TURN = 2.5;
 
-// Çırpma uçuşa da yansısın (istemezsen ikisini 0 yap, sadece görsel çırpar):
-const FLAP_SENS   = 0.5;
-const FLAP_THRUST = 12;
-const FLAP_LIFT   = 6;
+let gameStart = null, finished = false, worldTime = 0;
 
 function lerp(a, b, t)  { return a + (b - a) * t; }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function deadzone(v, d) { return Math.abs(v) < d ? 0 : v; }
+function turnToward(cur, target, maxStep) {
+  let diff = target - cur;
+  while (diff >  Math.PI) diff -= 2 * Math.PI;
+  while (diff < -Math.PI) diff += 2 * Math.PI;
+  return cur + clamp(diff, -maxStep, maxStep);
+}
+function fmt(ms) {
+  const s = Math.floor(ms / 1000);
+  return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+}
 
 // =========================================================
 // 5) MEDIAPIPE + WEBCAM
@@ -234,54 +324,41 @@ async function initPose() {
   drawingUtils = new DrawingUtils(octx);
   startWebcam();
 }
-
 async function startWebcam() {
   const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
   video.srcObject = stream;
   video.addEventListener("loadeddata", () => {
     overlay.width  = video.videoWidth;
     overlay.height = video.videoHeight;
+    gameStart = performance.now(); // süre başlasın
     detectLoop();
   });
 }
-
 function detectLoop() {
   if (video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
     poseLandmarker.detectForVideo(video, performance.now(), (result) => {
-      octx.save();
-      octx.clearRect(0, 0, overlay.width, overlay.height);
+      octx.save(); octx.clearRect(0, 0, overlay.width, overlay.height);
       if (result.landmarks && result.landmarks.length > 0) {
         const lm = result.landmarks[0];
         drawingUtils.drawConnectors(lm, PoseLandmarker.POSE_CONNECTIONS, { color: "#38bdf8", lineWidth: 3 });
         drawingUtils.drawLandmarks(lm, { color: "#fbbf24", radius: 4 });
         readPose(lm);
-      } else {
-        targetRoll = 0; targetPitch = 0; flapRaw = 0; prevWristY = null;
-      }
+      } else { targetRoll = 0; targetPitch = 0; flapRaw = 0; prevWristY = null; }
       octx.restore();
     });
   }
   requestAnimationFrame(detectLoop);
 }
-
 function readPose(lm) {
-  const ls = lm[11], rs = lm[12];
-  const lw = lm[15], rw = lm[16];
-
+  const ls = lm[11], rs = lm[12], lw = lm[15], rw = lm[16];
   const shoulderY = (ls.y + rs.y) / 2;
   const wristY    = (lw.y + rw.y) / 2;
-
   targetRoll  = clamp(deadzone((rw.y - lw.y) * ROLL_GAIN, DEADZONE), -MAX_ROLL, MAX_ROLL);
   targetPitch = clamp(deadzone((shoulderY - wristY) * PITCH_GAIN, DEADZONE), -MAX_PITCH, MAX_PITCH);
-
-  // Çırpma: bileklerin dikey HIZI (sadece kolların hareket edince > 0)
   const now = performance.now();
-  const dtp = (now - lastPoseTime) / 1000;
-  lastPoseTime = now;
-  if (prevWristY !== null && dtp > 0.001 && dtp < 0.5) {
-    flapRaw = Math.abs(wristY - prevWristY) / dtp;
-  }
+  const dtp = (now - lastPoseTime) / 1000; lastPoseTime = now;
+  if (prevWristY !== null && dtp > 0.001 && dtp < 0.5) flapRaw = Math.abs(wristY - prevWristY) / dtp;
   prevWristY = wristY;
 }
 
@@ -290,11 +367,12 @@ function readPose(lm) {
 // =========================================================
 scene.onBeforeRenderObservable.add(() => {
   const dt = engine.getDeltaTime() / 1000;
+  worldTime += dt;
 
+  // --- uçuş ---
   smoothRoll  = lerp(smoothRoll,  targetRoll,  0.12);
   smoothPitch = lerp(smoothPitch, targetPitch, 0.12);
   flapPower   = lerp(flapPower, clamp(flapRaw * FLAP_SENS, 0, 1), 0.15);
-
   heading += smoothRoll * TURN_RATE * dt;
 
   const speedNow = SPEED + flapPower * FLAP_THRUST;
@@ -304,13 +382,80 @@ scene.onBeforeRenderObservable.add(() => {
   bird.position.y += flapPower * FLAP_LIFT * dt;
   bird.position.y = Math.max(3, bird.position.y);
 
+  const bx = bird.position.x, bz = bird.position.z;
+  const distC = Math.sqrt(bx * bx + bz * bz);
+  if (distC > SOFT_EDGE) {
+    const angleToCenter = Math.atan2(-bx, -bz);
+    const strength = clamp((distC - SOFT_EDGE) / (WORLD_LIMIT - SOFT_EDGE), 0, 1);
+    heading = turnToward(heading, angleToCenter, EDGE_TURN * strength * dt);
+  }
+  bird.position.x = clamp(bird.position.x, -WORLD_LIMIT, WORLD_LIMIT);
+  bird.position.z = clamp(bird.position.z, -WORLD_LIMIT, WORLD_LIMIT);
+
   bird.rotation.y = heading;
   bird.rotation.x = -smoothPitch;
   bird.rotation.z = -smoothRoll;
-
-  // Kanat çırpma (basit kuş ya da GLB, hangisi yüklüyse)
   applyFlap(flapPower, dt);
 
+  // --- HEDEFLER: animasyon + toplama + en yakını bul (pusula için) ---
+  let nearest = null, nearestDist = Infinity;
+  for (const orb of orbs) {
+    if (orb.collected && !orb.collecting) continue;
+
+    if (orb.collecting) {
+      // toplanınca büyüyüp kaybolma efekti
+      orb.collectT += dt;
+      orb.mesh.scaling.setAll(1 + orb.collectT * 7);
+      if (orb.collectT > 0.2) { orb.mesh.setEnabled(false); orb.collecting = false; }
+      continue;
+    }
+
+    // sekme + dönme
+    orb.mesh.position.y = orb.baseY + Math.sin(worldTime * 2 + orb.phase) * 0.8;
+    orb.mesh.rotation.y += dt * 1.5;
+
+    // toplama kontrolü
+    const d = BABYLON.Vector3.Distance(bird.position, orb.mesh.position);
+    if (d < COLLECT_RADIUS) {
+      orb.collected = true; orb.collecting = true; orb.collectT = 0;
+      collectedCount++;
+      scoreEl.textContent = collectedCount + " / " + TOTAL_TARGETS;
+      blip();
+      if (collectedCount >= TOTAL_TARGETS && !finished) {
+        finished = true;
+        winText.textContent = "15 / 15 küre — Süre: " + fmt(performance.now() - gameStart);
+        winEl.style.display = "flex";
+      }
+      continue;
+    }
+
+    // pusula için en yakın (yatay mesafe)
+    const dx = orb.mesh.position.x - bird.position.x;
+    const dz = orb.mesh.position.z - bird.position.z;
+    const horiz = Math.sqrt(dx * dx + dz * dz);
+    if (horiz < nearestDist) { nearestDist = horiz; nearest = orb; }
+  }
+
+  // --- PUSULA OKU ---
+  if (nearest) {
+    const dx = nearest.mesh.position.x - bird.position.x;
+    const dz = nearest.mesh.position.z - bird.position.z;
+    const angleToTarget = Math.atan2(dx, dz);
+    let rel = angleToTarget - heading;
+    while (rel >  Math.PI) rel -= 2 * Math.PI;
+    while (rel < -Math.PI) rel += 2 * Math.PI;
+    arrowEl.style.transform = "rotate(" + (rel * 180 / Math.PI) + "deg)";
+    // yön ters gelirse: yukarıdaki satırı (-rel * 180 / Math.PI) yap
+    const d3 = BABYLON.Vector3.Distance(bird.position, nearest.mesh.position);
+    distEl.textContent = Math.round(d3) + "m";
+  } else {
+    document.getElementById("compass").style.display = "none";
+  }
+
+  // --- süre ---
+  if (gameStart && !finished) timerEl.textContent = fmt(performance.now() - gameStart);
+
+  // --- kamera ---
   const camPos = bird.position.subtract(fwd.scale(CAM_DIST));
   camPos.y += CAM_HEIGHT;
   camera.position = BABYLON.Vector3.Lerp(camera.position, camPos, 0.1);
