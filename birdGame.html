@@ -53,7 +53,7 @@
   <div id="right">
     <canvas id="renderCanvas"></canvas>
     <div id="gameHud">
-      <div id="score">0 / 15</div>
+      <div id="score">0 / 3</div>
       <div id="timer">00:00</div>
     </div>
     <div id="compass">
@@ -169,7 +169,8 @@ BABYLON.SceneLoader.ImportMeshAsync(null, "./", "tree.glb", scene).then((res) =>
 // =========================================================
 // 1.5) HEDEFLER — parlayan küreler
 // =========================================================
-const TOTAL_TARGETS  = 15;
+const TOTAL_TARGETS  = 15;   // sahnedeki küre sayısı (aynı kalıyor)
+const TARGET_GOAL    = 3;    // kazanmak için toplanacak küre
 const COLLECT_RADIUS = 6;
 const orbs = [];
 
@@ -419,11 +420,11 @@ scene.onBeforeRenderObservable.add(() => {
     if (d < COLLECT_RADIUS) {
       orb.collected = true; orb.collecting = true; orb.collectT = 0;
       collectedCount++;
-      scoreEl.textContent = collectedCount + " / " + TOTAL_TARGETS;
+      scoreEl.textContent = collectedCount + " / " + TARGET_GOAL;
       blip();
-      if (collectedCount >= TOTAL_TARGETS && !finished) {
+      if (collectedCount >= TARGET_GOAL && !finished) {
         finished = true;
-        winText.textContent = "15 / 15 küre — Süre: " + fmt(performance.now() - gameStart);
+        winText.textContent = TARGET_GOAL + " / " + TARGET_GOAL + " küre — Süre: " + fmt(performance.now() - gameStart);
         winEl.style.display = "flex";
       }
       continue;
