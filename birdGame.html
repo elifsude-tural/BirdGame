@@ -40,6 +40,11 @@
     background: rgba(0,0,0,0.55); text-align: center; }
   #win h1 { font-size: 40px; margin: 0 0 8px; color: #ffd54a; }
   #win p { font-size: 22px; margin: 0; }
+  #replayBtn { margin-top: 22px; padding: 12px 28px; font-size: 18px; font-weight: 600;
+    color: #111; background: #ffd54a; border: none; border-radius: 24px; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4); transition: transform 0.08s, background 0.15s; }
+  #replayBtn:hover { background: #ffe27a; transform: translateY(-2px); }
+  #replayBtn:active { transform: translateY(0); }
 </style>
 </head>
 
@@ -60,7 +65,11 @@
       <div id="arrow">▲</div>
       <div id="dist">--</div>
     </div>
-    <div id="win"><h1>Tebrikler!</h1><p id="winText"></p></div>
+    <div id="win">
+      <h1>Tebrikler!</h1>
+      <p id="winText"></p>
+      <button id="replayBtn">Tekrar Oyna</button>
+    </div>
   </div>
 
 <script type="module">
@@ -79,6 +88,8 @@ const arrowEl = document.getElementById("arrow");
 const distEl  = document.getElementById("dist");
 const winEl   = document.getElementById("win");
 const winText = document.getElementById("winText");
+const replayBtn = document.getElementById("replayBtn");
+const compassEl = document.getElementById("compass");
 
 const WORLD_LIMIT = 280;
 
@@ -179,14 +190,20 @@ orbMat.emissiveColor = new BABYLON.Color3(1.0, 0.82, 0.15); // altın sarısı �
 orbMat.diffuseColor  = new BABYLON.Color3(1.0, 0.82, 0.15);
 orbMat.specularColor = new BABYLON.Color3(0.3, 0.3, 0.3);
 
+function randomOrbPos() {
+  return {
+    x: (Math.random() - 0.5) * 2 * (WORLD_LIMIT - 25),
+    z: (Math.random() - 0.5) * 2 * (WORLD_LIMIT - 25),
+    y: 8 + Math.random() * 24
+  };
+}
+
 for (let i = 0; i < TOTAL_TARGETS; i++) {
   const m = BABYLON.MeshBuilder.CreateSphere("orb" + i, { diameter: 3, segments: 12 }, scene);
   m.material = orbMat;
-  const x = (Math.random() - 0.5) * 2 * (WORLD_LIMIT - 25);
-  const z = (Math.random() - 0.5) * 2 * (WORLD_LIMIT - 25);
-  const y = 8 + Math.random() * 24;
-  m.position.set(x, y, z);
-  orbs.push({ mesh: m, baseY: y, phase: Math.random() * Math.PI * 2,
+  const p = randomOrbPos();
+  m.position.set(p.x, p.y, p.z);
+  orbs.push({ mesh: m, baseY: p.y, phase: Math.random() * Math.PI * 2,
               collected: false, collecting: false, collectT: 0 });
 }
 
@@ -306,6 +323,44 @@ function fmt(ms) {
 }
 
 // =========================================================
+// 4.5) OYUNU SIFIRLA (Tekrar Oyna)
+// =========================================================
+function resetGame() {
+  // kuş başa dönsün
+  bird.position.set(0, 25, 0);
+  bird.rotation.set(0, 0, 0);
+  heading = 0;
+  smoothRoll = smoothPitch = 0;
+  targetRoll = targetPitch = 0;
+  flapRaw = flapPower = 0;
+  prevWristY = null;
+
+  // küreler yeniden yerleşsin
+  for (const orb of orbs) {
+    orb.collected = false;
+    orb.collecting = false;
+    orb.collectT = 0;
+    const p = randomOrbPos();
+    orb.baseY = p.y;
+    orb.phase = Math.random() * Math.PI * 2;
+    orb.mesh.position.set(p.x, p.y, p.z);
+    orb.mesh.rotation.y = 0;
+    orb.mesh.scaling.setAll(1);
+    orb.mesh.setEnabled(true);
+  }
+
+  // durum
+  collectedCount = 0;
+  finished = false;
+  scoreEl.textContent = "0 / " + TARGET_GOAL;
+  timerEl.textContent = "00:00";
+  compassEl.style.display = "";     // pusula tekrar görünsün
+  winEl.style.display = "none";     // kazanma ekranını kapat
+  gameStart = performance.now();    // süre baştan
+}
+replayBtn.addEventListener("click", resetGame);
+
+// =========================================================
 // 5) MEDIAPIPE + WEBCAM
 // =========================================================
 let poseLandmarker, drawingUtils, lastVideoTime = -1;
@@ -369,6 +424,9 @@ function readPose(lm) {
 scene.onBeforeRenderObservable.add(() => {
   const dt = engine.getDeltaTime() / 1000;
   worldTime += dt;
+
+  // Oyun bitti → kuş donsun, sahne olduğu yerde kalsın.
+  if (finished) return;
 
   // --- uçuş ---
   smoothRoll  = lerp(smoothRoll,  targetRoll,  0.12);
@@ -450,7 +508,7 @@ scene.onBeforeRenderObservable.add(() => {
     const d3 = BABYLON.Vector3.Distance(bird.position, nearest.mesh.position);
     distEl.textContent = Math.round(d3) + "m";
   } else {
-    document.getElementById("compass").style.display = "none";
+    compassEl.style.display = "none";
   }
 
   // --- süre ---
